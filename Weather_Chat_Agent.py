@@ -68,7 +68,7 @@ def get_weather(city: str) -> str:
                 "longitude": coords[1],
                 "current_weather": True,
             },
-            timeout=0.001,      #防止程序长时间等待
+            timeout=5,      #防止程序长时间等待
         )
         resp.raise_for_status()  #如果响应状态码不是200，将抛出异常
         data = resp.json() 
