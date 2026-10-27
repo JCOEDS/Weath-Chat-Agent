@@ -1,0 +1,15 @@
+1：查询天气时agent返回current_weather报错信息
+在data = resp.json()后加一行print("API返回",data)用于调试，发现print打印出的JSON文本为：API返回数据: {'error': True, 'reason': 'Invalid value: Cannot initialize Float from invalid String value lat'}
+API返回数据: {'reason': 'Invalid value: Cannot initialize Float from invalid String value lat', 'error': True}
+说明”串参数了“，deepseek把CITY_COORDS的lat变量名当成了实际值传给了get_Weather参数。
+解决方法：直接把CITY_COORDS改成了只存数值元组的字典，并且将get_weather函数中用city_coords[0][1]来指代。
+
+2：没有检查 HTTP 状态码。
+requests.get(...) 后直接调用 resp.json()。如果服务返回 HTTP 错误，程序没有明确检查请求是否成功，可能在读取响应字段时才出错。
+解决方法：在解析 JSON 前调用 resp.raise_for_status()
+
+3：异常处理过于宽泛。
+except Exception as e 会把各种问题都转换成普通文本返回；这虽然避免程序直接崩溃，但也可能掩盖代码错误，使调试困难。
+解决方法：将错误信息中加上异常类型，方便定位问题，后续可进行相关异常和解析异常分开处理
+
+我最初只做了基本的 try-except，后来发现两个问题：一是 HTTP 非 200 时可能静默拿到错误数据，我加了 raise_for_status() 阻断；二是宽泛异常掩盖了调试信息，我在错误返回里加上了异常类型。如果继续演进，我会把网络异常和解析异常分开处理
