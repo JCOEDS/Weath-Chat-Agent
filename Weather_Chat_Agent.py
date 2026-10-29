@@ -1,17 +1,77 @@
 import os
+import time
 import requests
 
+from time import perf_counter
+from uuid import UUID
+
+from openai import APIError
+
 from langchain.agents import create_agent
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_deepseek import ChatDeepSeek
 
-# 初始化DeepSeek模型
-model = ChatDeepSeek(
-    model="deepseek-flash",
-    api_key=os.environ["DEEPSEEK_API_KEY"],
-    base_url="https://api.deepseek.com/v1",
-)
+
+class SimpleTraceHandler(BaseCallbackHandler):
+    def __init__(self):
+        self._runs: dict[UUID, tuple[str, float]] = {}
+
+    def _start(self, run_id: UUID, kind: str, name: str) -> None:
+        self._runs[run_id] = (kind, perf_counter())
+        print(f"[追踪] {kind}开始：{name}")
+
+    def _finish(self, run_id: UUID, event: str) -> None:
+        run = self._runs.pop(run_id, None)
+        if run is None:
+            print(f"[追踪] {event}")
+            return
+
+        kind, started_at = run
+        elapsed = perf_counter() - started_at
+        print(f"[追踪] {kind}{event}（耗时 {elapsed:.2f} 秒）")
+
+    def on_chat_model_start(
+        self,
+        serialized: dict,
+        messages: list,
+        *,
+        run_id: UUID,
+        **kwargs,
+    ) -> None:
+        self._start(run_id, "模型", "聊天模型")
+
+    def on_llm_end(self, response, *, run_id: UUID, **kwargs) -> None:
+        self._finish(run_id, "完成")
+
+    def on_llm_error(
+        self, error: BaseException, *, run_id: UUID, **kwargs
+    ) -> None:
+        self._finish(run_id, f"失败（{type(error).__name__}）")
+
+    def on_tool_start(
+        self,
+        serialized: dict,
+        input_str: str,
+        *,
+        run_id: UUID,
+        **kwargs,
+    ) -> None:
+        name = serialized.get("name", "工具")
+        if name == "get_weather":
+            name = "天气查询工具"
+        self._start(run_id, "工具", name)
+
+    def on_tool_end(self, output, *, run_id: UUID, **kwargs) -> None:
+        self._finish(run_id, "完成")
+
+    def on_tool_error(
+        self, error: BaseException, *, run_id: UUID, **kwargs
+    ) -> None:
+        self._finish(run_id, f"失败（{type(error).__name__}）")
+
+
 
 #城市经纬度坐标，参考自https://www.latlong.net/category/cities-236-15.html
 CITY_COORDS = {
@@ -82,31 +142,50 @@ def get_weather(city: str) -> str:
     except Exception as e:              #捕获异常，返回错误信息
         return f"查询{city}天气时发生错误({type(e).__name__}): {str(e)}"
 
-#创建一个DeepSeek智能体，集成get_weather工具
-agent = create_agent(
-    model=model,
-    tools=[get_weather],
-    system_prompt="你是deepseek，你是一个天气查询助手，用户会询问某个城市的天气，你需要调用get_weather工具来获取天气信息。",
-    checkpointer=InMemorySaver(),
-)
 
-#配置智能体的线程ID，确保每次对话都是独立的
-config = {"configurable": {"thread_id": "user-chat-1"}}
-
-#开始对话的标志
-print("对话开始，输入quit退出")
-
-#用户输入循环，直到用户输入"quit"结束
-while True:
-    user_input = input("用户: ")
-    if user_input.strip().lower() == "quit": #避免大小写和空格影响判断
-        break
-
-#调用智能体进行对话，传入用户输入和配置
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": user_input}]},
-        config=config,
+def main():
+    # 初始化DeepSeek模型
+    model = ChatDeepSeek(
+        model="deepseek-flash",
+        api_key=os.environ["DEEPSEEK_API_KEY"],
+        base_url="https://api.deepseek.com/v1",
     )
 
-#打印助手的回复
-    print(f"助手: {result['messages'][-1].content}")
+    #创建一个DeepSeek智能体，集成get_weather工具
+    agent = create_agent(
+        model=model,
+        tools=[get_weather],
+        system_prompt="你是deepseek，你是一个天气查询助手，用户会询问某个城市的天气，你需要调用get_weather工具来获取天气信息。",
+        checkpointer=InMemorySaver(),
+    )
+
+    # 配置同一会话的记忆和运行追踪
+    config = {
+        "configurable": {"thread_id": "user-chat-1"},
+        "callbacks": [SimpleTraceHandler()],
+    }
+
+    #开始对话的标志
+    print("对话开始，输入quit退出")
+
+    #用户输入循环，直到用户输入"quit"结束
+    while True:
+        user_input = input("用户: ")
+        if user_input.strip().lower() == "quit": #避免大小写和空格影响判断
+            break
+
+    #调用智能体进行对话，传入用户输入和配置，防止模型API请求失败导致程序崩溃
+        try:
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": user_input}]},
+                config=config,
+            )
+        except APIError as e:
+            print(f"模型 API 请求失败（{type(e).__name__}）：{e}")
+            continue
+
+    #打印助手的回复
+        print(f"助手: {result['messages'][-1].content}")
+
+if __name__ == "__main__":
+    main()
