@@ -18,8 +18,7 @@ FAIL：观察到程序崩溃或行为不符合预期。
 一、自动化模拟测试
 ------------------
 运行环境：Windows，Python 3.14.9，pytest 9.2.0
-测试命令：python -m pytest -v test_weather.py
-说明：这些测试使用 Mock 模拟天气 API，不访问真实天气服务，也不调用 DeepSeek。
+4说明：这些测试使用 Mock 模拟天气 API，不访问真实天气服务，也不调用 DeepSeek。
 
 | 编号 | 测试用例 | 结果 | 记录 |
 |---|---|---|---|
